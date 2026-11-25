@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Studio Foto Pribadi AI</title>
+  <style>
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+    body { margin: 0; padding: 14px; background: #0f172a; color: #f8fafc; }
+    .wrap { max-width: 680px; margin: 0 auto; display: grid; gap: 12px; }
+    .box { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 12px; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    button, select, input[type="file"] {
+      border-radius: 8px; border: 1px solid #475569; background: #0f172a;
+      color: #f8fafc; padding: 8px 12px; font-size: 0.85rem; cursor: pointer;
+    }
+    button.active { background: #16a34a; border-color: #22c55e; font-weight: 600; }
+    button.ai-btn { background: #0d9488; border-color: #14b8a6; font-weight: 600; }
+    button.save { background: #2563eb; border-color: #3b82f6; font-weight: 600; }
+    .stage { position: relative; width: 100%; overflow: hidden; border-radius: 10px; background: #020617; display: none; }
+    .stage img.full { width: 100%; height: auto; display: block; }
+    .clip { position: absolute; inset: 0; width: 50%; overflow: hidden; }
+    .clip img { height: 100%; width: auto; max-width: none; display: block; }
+    .tag { position: absolute; top: 8px; padding: 3px 8px; border-radius: 6px; font-size: 0.7rem; background: rgba(0,0,0,0.65); }
+    .tag.l { left: 8px; }
+    .tag.r { right: 8px; }
+    label { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem; flex: 1; min-width: 140px; }
+    .msg { font-size: 0.8rem; color: #86efac; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="box">
+      <strong>1. Pilih Foto & Ukuran</strong>
+      <div class="row"><input type="file" id="photoInput" accept="image/*" /></div>
+      <div class="row" id="ratioBar">
+        <button data-r="original" class="active">Asli</button>
+        <button data-r="2/3">2x3</button>
+        <button data-r="3/4">3x4</button>
+        <button data-r="4/6">4x6</button>
+        <button data-r="1/1">1:1</button>
+        <button data-r="4/5">4:5</button>
+        <button data-r="16/9">16:9</button>
+      </div>
+      <div class="msg" id="dimText">Ukuran: Asli</div>
+    </div>
+
+    <div class="box">
+      <strong>2. AI Ganti Baju & Retouch Wajah</strong>
+      <div class="row" id="aiActionBar">
+        <button data-mode="koko" class="active">Baju Koko / Muslim</button>
+        <button data-mode="suit_tie">Jas + Dasi</button>
+        <button data-mode="jacket">Jaket</button>
+        <button data-mode="retouch_hd">Retouch Wajah & HD</button>
+      </div>
+      <div class="row">
+        <button class="ai-btn" id="btnRunAi">Terapkan AI ke Foto</button>
+      </div>
+      <div class="msg" id="aiStatus">Siap dihubungkan ke /api/edit di Vercel.</div>
+    </div>
+
+    <div class="box">
+      <strong>3. Atur Cahaya & Ketajaman (Lokal)</strong>
+      <div class="row">
+        <label>Cerahkan Wajah (<span id="vBright">112%</span>)
+          <input type="range" id="sBright" min="85" max="135" value="112" />
+        </label>
+        <label>Kontras & Flash (<span id="vContrast">114%</span>)
+          <input type="range" id="sContrast" min="85" max="135" value="114" />
+        </label>
+        <label>Warna Hidup (<span id="vSat">110%</span>)
+          <input type="range" id="sSat" min="70" max="140" value="110" />
+        </label>
+      </div>
+    </div>
+
+    <div class="box">
+      <strong>4. Sebelum / Sesudah</strong>
+      <div class="stage" id="stage">
+        <img id="imgAfter" class="full" alt="Sesudah" />
+        <div class="clip" id="clipBox"><img id="imgBefore" alt="Sebelum" /></div>
+        <span class="tag l">SEBELUM</span>
+        <span class="tag r">SESUDAH</span>
+      </div>
+      <input type="range" id="split" min="0" max="100" value="50" style="width:100%;margin-top:8px;" />
+    </div>
+
+    <div class="box">
+      <strong>5. Simpan ke Galeri</strong>
+      <div class="row">
+        <select id="sizeMode">
+          <option value="small">Ukuran Terkecil</option>
+          <option value="medium">Ukuran Kecil</option>
+          <option value="hd" selected>Ukuran HD</option>
+        </select>
+        <button class="save" id="btnSave">Simpan ke Galeri</button>
+      </div>
+      <div class="msg" id="saveMsg"></div>
+    </div>
+  </div>
+
+  <canvas id="c" style="display:none;"></canvas>
+  <script>
+    const API_ENDPOINT = "/api/edit";
+
+    const PROMPTS_BY_MODE = {
+      koko: "Change the person's clothing to a neat white Muslim baju koko with natural fabric folds, collar, and lighting matching the body pose. Keep the exact face, expression, hair, and identity unchanged.",
+      suit_tie: "Change the person's clothing to a tailored dark formal suit jacket over a crisp white shirt and tie, with realistic fabric creases and lighting matching the body pose. Keep the exact face, expression, hair, and identity unchanged.",
+      jacket: "Change the person's clothing to a clean modern jacket with realistic folds and lighting matching the body pose. Keep the exact face, expression, hair, and identity unchanged.",
+      retouch_hd: "Naturally smooth skin blemishes and acne while keeping real skin texture, brighten facial lighting slightly, and enhance sharpness to HD quality. Keep exact face identity and clothing unchanged."
+    };
+
+    const photoInput = document.getElementById('photoInput');
+    const ratioBtns = document.querySelectorAll('#ratioBar button');
+    const aiModeBtns = document.querySelectorAll('#aiActionBar button');
+    const btnRunAi = document.getElementById('btnRunAi');
+    const aiStatus = document.getElementById('aiStatus');
+    const dimText = document.getElementById('dimText');
+    const sBright = document.getElementById('sBright');
+    const sContrast = document.getElementById('sContrast');
+    const sSat = document.getElementById('sSat');
+    const vBright = document.getElementById('vBright');
+    const vContrast = document.getElementById('vContrast');
+    const vSat = document.getElementById('vSat');
+    const stage = document.getElementById('stage');
+    const clipBox = document.getElementById('clipBox');
+    const imgBefore = document.getElementById('imgBefore');
+    const imgAfter = document.getElementById('imgAfter');
+    const split = document.getElementById('split');
+    const sizeMode = document.getElementById('sizeMode');
+    const btnSave = document.getElementById('btnSave');
+    const saveMsg = document.getElementById('saveMsg');
+    const c = document.getElementById('c');
+    const ctx = c.getContext('2d');
+
+    let origImg = new Image();
+    let aiResultImg = null;
+    let ratioKey = 'original';
+    let selectedAiMode = 'koko';
+
+    function calcCropAndSize(w, h, rKey, mode) {
+      let cw = w, ch = h;
+      if (rKey !== 'original') {
+        const [rw, rh] = rKey.split('/').map(Number);
+        const targetR = rw / rh;
+        const curR = w / h;
+        if (curR > targetR) { cw = Math.round(h * targetR); ch = h; }
+        else { cw = w; ch = Math.round(w / targetR); }
+      }
+      let scale = 1;
+      if (mode === 'small') scale = 0.45;
+      else if (mode === 'medium') scale = 0.7;
+      else scale = Math.max(1, 1280 / Math.max(cw, ch));
+
+      return {
+        sx: Math.max(0, Math.round((w - cw) / 2)),
+        sy: Math.max(0, Math.round((h - ch) / 2)),
+        cw, ch,
+        outW: Math.max(100, Math.round(cw * scale)),
+        outH: Math.max(100, Math.round(ch * scale))
+      };
+    }
+
+    function updateView(qualityForSave = null) {
+      if (!origImg.src) return null;
+      const info = calcCropAndSize(origImg.naturalWidth, origImg.naturalHeight, ratioKey, sizeMode.value);
+      c.width = info.outW;
+      c.height = info.outH;
+
+      ctx.filter = 'none';
+      ctx.drawImage(origImg, info.sx, info.sy, info.cw, info.ch, 0, 0, info.outW, info.outH);
+      const beforeData = c.toDataURL('image/jpeg', 0.9);
+
+      const sourceForAfter = (aiResultImg && aiResultImg.complete && aiResultImg.naturalWidth > 0) ? aiResultImg : origImg;
+      const aInfo = calcCropAndSize(sourceForAfter.naturalWidth, sourceForAfter.naturalHeight, ratioKey, sizeMode.value);
+
+      ctx.clearRect(0, 0, info.outW, info.outH);
+      ctx.filter = `brightness(${sBright.value}%) contrast(${sContrast.value}%) saturate(${sSat.value}%)`;
+      ctx.drawImage(sourceForAfter, aInfo.sx, aInfo.sy, aInfo.cw, aInfo.ch, 0, 0, info.outW, info.outH);
+      ctx.filter = 'none';
+
+      const afterData = c.toDataURL('image/jpeg', qualityForSave ?? 0.92);
+      imgBefore.src = beforeData;
+      imgAfter.src = afterData;
+      stage.style.display = 'block';
+      syncBeforeSize();
+      dimText.textContent = `Ukuran: ${ratioKey === 'original' ? 'Asli' : ratioKey.replace('/', 'x')} (${info.outW} x ${info.outH} px)`;
+      return afterData;
+    }
+
+    function syncBeforeSize() {
+      const rect = stage.getBoundingClientRect();
+      if (rect.width && rect.height) {
+        imgBefore.style.width = rect.width + 'px';
+        imgBefore.style.height = rect.height + 'px';
+      }
+    }
+
+    btnRunAi.addEventListener('click', async () => {
+      if (!origImg.src) {
+        aiStatus.textContent = 'Pilih foto terlebih dahulu.';
+        return;
+      }
+      if (!API_ENDPOINT) {
+        aiStatus.textContent = 'API_ENDPOINT belum diisi.';
+        return;
+      }
+
+      btnRunAi.disabled = true;
+      aiStatus.textContent = 'Mengirim foto ke AI... mohon tunggu.';
+
+      try {
+        const res = await fetch(API_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode: selectedAiMode,
+            prompt: PROMPTS_BY_MODE[selectedAiMode],
+            imageBase64: origImg.src
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.imageUrl) {
+          throw new Error(data.error || 'Respons API tidak mengembalikan imageUrl.');
+        }
+
+        const nextImg = new Image();
+        nextImg.crossOrigin = 'anonymous';
+        nextImg.onload = () => {
+          aiResultImg = nextImg;
+          updateView();
+          aiStatus.textContent = 'Selesai diproses AI. Geser slider Sebelum / Sesudah untuk melihat hasil.';
+          btnRunAi.disabled = false;
+        };
+        nextImg.onerror = () => {
+          aiStatus.textContent = 'Gagal memuat gambar hasil dari API.';
+          btnRunAi.disabled = false;
+        };
+        nextImg.src = data.imageUrl;
+      } catch (err) {
+        aiStatus.textContent = 'Error AI: ' + err.message;
+        btnRunAi.disabled = false;
+      }
+    });
+
+    photoInput.addEventListener('change', (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      aiResultImg = null;
+      const fr = new FileReader();
+      fr.onload = () => {
+        origImg = new Image();
+        origImg.onload = () => updateView();
+        origImg.src = fr.result;
+      };
+      fr.readAsDataURL(f);
+    });
+
+    ratioBtns.forEach((b) => {
+      b.addEventListener('click', () => {
+        ratioBtns.forEach((x) => x.classList.remove('active'));
+        b.classList.add('active');
+        ratioKey = b.dataset.r;
+        updateView();
+      });
+    });
+
+    aiModeBtns.forEach((b) => {
+      b.addEventListener('click', () => {
+        aiModeBtns.forEach((x) => x.classList.remove('active'));
+        b.classList.add('active');
+        selectedAiMode = b.dataset.mode;
+      });
+    });
+
+    [sBright, sContrast, sSat].forEach((inp) => {
+      inp.addEventListener('input', () => {
+        vBright.textContent = sBright.value + '%';
+        vContrast.textContent = sContrast.value + '%';
+        vSat.textContent = sSat.value + '%';
+        updateView();
+      });
+    });
+
+    split.addEventListener('input', () => {
+      clipBox.style.width = split.value + '%';
+    });
+
+    sizeMode.addEventListener('change', () => updateView());
+    window.addEventListener('resize', syncBeforeSize);
+
+    btnSave.addEventListener('click', () => {
+      if (!origImg.src) {
+        saveMsg.textContent = 'Pilih foto dulu.';
+        return;
+      }
+      const q = sizeMode.value === 'small' ? 0.5 : sizeMode.value === 'medium' ? 0.75 : 0.95;
+      const dataUrl = updateView(q);
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = `edit-${sizeMode.value}-${Date.now()}.jpg`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      saveMsg.textContent = 'Unduhan dimulai. Cek notifikasi Chrome & folder Download/Galeri.';
+    });
+  </script>
+</body>
+  </html>
+  
